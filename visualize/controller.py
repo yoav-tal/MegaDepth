@@ -39,12 +39,10 @@ class Control:
 
         buttons_frame = self.VIEWER.frames["buttons"]
 
-        for content in self.MODEL.viewables:
-            if not content in self.buttons.keys():
-
-                self.buttons[content] = tk.Button(master=buttons_frame, text=content,
+        for content in self.MODEL.stable_viewables + self.MODEL.updating_viewables:
+            self.buttons[content] = tk.Button(master=buttons_frame, text=content,
                             command=self.call_init_image(getattr(self.MODEL, content), content))
-                self.VIEWER.grid_button(self.buttons[content])
+            self.VIEWER.grid_button(self.buttons[content])
 
     def call_init_image(self, image, name):
 
@@ -59,15 +57,26 @@ class Control:
         sliders_frame = self.VIEWER.frames["sliders"]
 
         for content in self.MODEL.blur_variables:
-            if not content in self.sliders.keys():
+            from_, to_ = getattr(self.MODEL, content)["from_"], \
+                         getattr(self.MODEL, content)["to_"]
+            self.sliders[content] = tk.Scale(master=sliders_frame, orient=tk.HORIZONTAL,
+                                                 resolution= 0.05, from_=from_, to_=to_,
+                                                 label=content,
+                                                 command=self.call_image_update(content))
+            self.sliders[content].set(getattr(self.MODEL, content)["val"])
+            self.VIEWER.grid_slider(self.sliders[content])
 
-                from_, to_ = getattr(self.MODEL, content)["from_"], \
-                             getattr(self.MODEL, content)["to_"]
-                self.sliders[content] = tk.Scale(master=sliders_frame, from_=from_, to_=to_,
-                                        text=content,
-                                        command=self.call_image_update(content))
-                self.VIEWER.grid_slider(self.sliders[content])
+    def call_image_update(self, name):
+        def image_update(val):
+            getattr(self.MODEL, name)["val"] = float(val)
+            self.MODEL.update_images()
+            for content in self.MODEL.updating_viewables:
+                if content in self.VIEWER.image_panels.keys():
+                    image = getattr(self.MODEL, content)
+                    panel = self.VIEWER.image_panels[content]
+                    self.VIEWER.view_image(image, panel)
 
+        return image_update
 
 
 """

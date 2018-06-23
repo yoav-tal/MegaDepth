@@ -3,6 +3,8 @@ import numpy as np
 import cv2
 from PIL import Image, ImageTk
 
+from visualize.viewer_utils import *
+
 
 class viewer:
 
@@ -12,6 +14,60 @@ class viewer:
         self.master = master
         self.master.title("Depth viewer")
 
+        self.frames = {}
+        self.image_panels = {}
+
+        self.num_frames = -1
+        self.num_buttons = -1
+        self.num_sliders = -1
+
+    def add_frame(self, name, **kwargs):
+        self.num_frames += 1
+        self.frames[name] = tk.Frame(self.master)
+        row, column = calc_frame_grid(self.num_frames, name)
+        print("frame", self.num_frames, "row", row, "column", column)
+        self.frames[name].grid(row=row, column=column)
+
+    def grid_button(self, button):
+        self.num_buttons += 1
+        row, column = calc_button_grid(self.num_buttons)
+        button.grid(row=row, column=column)
+
+    def grid_slider(self, slider):
+        self.num_sliders += 1
+        row, column = calc_button_grid(self.num_sliders)
+        slider.grid(row=row, column=column)
+
+    def update_frames(self):
+        pass
+
+
+    def init_image(self, img, name):
+
+        if not name in self.frames.keys():
+            self.add_frame(name)
+            self.image_panels[name] = tk.Label(self.frames[name])
+            self.image_panels[name].grid()
+
+            self.view_image(img, self.image_panels[name])
+
+    def view_image(self, image, panel):
+         # Change to PIL format
+         image = cv2ImageTk(image)
+
+         # update widget
+         panel.configure(image=image)
+         panel.image = image
+
+    def update_images(self):
+        pass
+
+
+
+
+
+
+"""
         # set up containers
         #self.buttons_frame = tk.Frame(self.master)
         #self.pad_frame = tk.Frame(self.master, bg='blue')
@@ -37,7 +93,7 @@ class viewer:
 
     # view objects. Should handle buttons, sliders and images (with or without resize update)
     def view(self,object, *args):
-
+        
         # image object
         if type(object) == np.ndarray:
             self.view_image(object, *args)
@@ -114,16 +170,8 @@ class viewer:
         # return the frame that should be binded to configuration
         return self.pad_frame
 
+"""
 
-
-# convert ndarray to PIL format
-def cv2ImageTk(img):
-
-    #img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    #print("array interface:", img.__array_interface__)
-    img = Image.fromarray(img)
-
-    return ImageTk.PhotoImage(img)
 
 
 

@@ -1,5 +1,6 @@
 import cv2
 import numpy as np
+from argparse import Namespace
 
 from visualize.get_depth_mask import get_depth_mask as get_depth
 from guidedFilter import fast_guided_filter_color as guided_filter
@@ -15,6 +16,9 @@ EPSILON = 1e-2
 
 # paths
 DEPTH_FOLDER = "/Users/yoav/MegaDepth/depths/"
+
+#blur
+COC_AT_INF = 5
 
 
 def calc_size(image_shape, target, divisor):
@@ -77,7 +81,7 @@ def get_depth_maps(image):
     filtered_depth_map = guided_filter(guide=image, src=depth_map / np.max(depth_map),
                                         radius=RADIUS * size_ratio, eps=EPSILON, subsample_ratio=1)
 
-    filtere_depth_map = set_to_range(filtered_depth_map, min=np.min(depth_map),
+    filtered_depth_map = set_to_range(filtered_depth_map, min=np.min(depth_map),
                                      max=np.max(depth_map))
 
     return depth_map, filtered_depth_map
@@ -114,3 +118,31 @@ def staged_resize(img, max_long_side=MAX_LONG_SIDE, size_divisor=NETWORK_SIZE_DI
         img = cv2.resize(img, (0, 0), fx=0.5, fy=0.5)
 
     return img
+
+def update_blur_maps(focal, coc_min, image, depth_map):
+
+    CoC_map = COC_AT_INF * abs(1 - focal / (depth_map + 1e-5))
+
+    focus_start = (COC_AT_INF * focal) / (COC_AT_INF + coc_min)
+    focus_end = (COC_AT_INF * focal) / (COC_AT_INF - coc_min)
+
+    segments = 1 + (-1 * (depth_map < focus_start) + 2 * (depth_map > focus_end))
+    # in segments: 0 - foreground ; 1 - focus ; 3 - background
+    segments_map = segments
+
+    segments = np.transpose(np.repeat(segments[:, np.newaxis], 3, axis=1), [0, 2, 1])
+
+    img_copy = np.copy(image)
+
+    np.copyto(img_copy, 0, where=segments == 1)
+
+    return CoC_map, segments_map, img_copy
+
+
+def init_blur_variables(min_val, max_val):
+    # should be computed from depth map values
+
+    focal = {"val": (max_val - min_val)/2, "from_": min_val, "to_": max_val}
+    coc_min = {"val": 1 , "from_": 0.05, "to_": COC_AT_INF - 0.05}
+
+    return focal, coc_min
