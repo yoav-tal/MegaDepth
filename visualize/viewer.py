@@ -38,10 +38,6 @@ class viewer:
         row, column = calc_button_grid(self.num_sliders)
         slider.grid(row=row, column=column)
 
-    def update_frames(self):
-        pass
-
-
     def init_image(self, img, name):
 
         if not name in self.frames.keys():
@@ -58,9 +54,6 @@ class viewer:
          # update widget
          panel.configure(image=image)
          panel.image = image
-
-    def update_images(self):
-        pass
 
 
 

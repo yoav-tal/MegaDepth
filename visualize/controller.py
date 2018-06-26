@@ -13,8 +13,8 @@ class Control:
         self.master = master
 
         # open file dialog
-        #path = filedialog.askopenfilename(initialdir = "/Users/yoav/MegaDepth/images")
-        path = '/Users/yoav/MegaDepth/images/city.png'
+        path = filedialog.askopenfilename(initialdir = "/Users/yoav/MegaDepth/images")
+        #path = '/Users/yoav/MegaDepth/images/city.png'
 
         image_name = path.split('/')[-1].split('.')[0]
 
@@ -60,7 +60,7 @@ class Control:
             from_, to_ = getattr(self.MODEL, content)["from_"], \
                          getattr(self.MODEL, content)["to_"]
             self.sliders[content] = tk.Scale(master=sliders_frame, orient=tk.HORIZONTAL,
-                                                 resolution= 0.05, from_=from_, to_=to_,
+                                                 resolution= 0.01, from_=from_, to_=to_,
                                                  label=content,
                                                  command=self.call_image_update(content))
             self.sliders[content].set(getattr(self.MODEL, content)["val"])
