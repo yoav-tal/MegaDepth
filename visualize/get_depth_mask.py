@@ -39,7 +39,7 @@ def get_inverse_mask(img):
     pred_inv_depth = 1 / pred_depth
     pred_inv_depth = pred_inv_depth.data.cpu().numpy()
 
-    pred_inv_depth = pred_inv_depth / np.amax(pred_inv_depth)
+    #pred_inv_depth = pred_inv_depth / np.amax(pred_inv_depth)
 
     return pred_inv_depth
 

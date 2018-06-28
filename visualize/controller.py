@@ -1,3 +1,5 @@
+import sys
+
 import cv2
 import tkinter as tk
 from tkinter import filedialog
@@ -17,9 +19,12 @@ class Control:
         #path = '/Users/yoav/MegaDepth/images/city.png'
 
         image_name = path.split('/')[-1].split('.')[0]
-
+        print("image name:", image_name)
         # set up a model with the image
-        self.MODEL = model.Model(cv2.imread(path).astype(float) / 255.0, image_name)
+        #self.MODEL = model.Model(cv2.imread(path).astype(float) / 255.0, image_name)
+        #self.MODEL = model.HazeModel(cv2.imread(path).astype(float) / 255.0, image_name)
+        self.MODEL = model.FlipModel(cv2.imread(path).astype(float) / 255.0, image_name)
+
 
         # set up a viewer
         self.VIEWER = viewer.viewer(self.master)
@@ -56,7 +61,7 @@ class Control:
 
         sliders_frame = self.VIEWER.frames["sliders"]
 
-        for content in self.MODEL.blur_variables:
+        for content in self.MODEL.control_variables:
             from_, to_ = getattr(self.MODEL, content)["from_"], \
                          getattr(self.MODEL, content)["to_"]
             self.sliders[content] = tk.Scale(master=sliders_frame, orient=tk.HORIZONTAL,
@@ -181,31 +186,6 @@ class Control:
 
 if __name__ == '__main__':
 
-
     root = tk.Tk()
     CONTROL = Control(root)
     root.mainloop()
-
-
-
-# controller initiative actions are opening a browse window and getting a path
-# (potentially handling exceptions)
-
-# control gets an image (potentially handles errors) and sends it to the model. control asks model for aspect ratio.
-
-# control sets up a viewer (inputs it the aspect ratio)
-
-# control builds buttons along with the commands they activate (which buttons to use is determined by a metadata list)
-# (each button toggles a slider) and sends them to the viewer
-
-# control calls the model to return an image and sends it to the viewer
-
-
-# control has a method to send objects to the viewer asking it to present them (sliders, buttons, images).
-# The viewer is responsible to know how to handle each object
-
-# upon a slider event, controller calls the model to update the image, then sends the updated image to the viewer
-
-# when the viewer informs the controller of a change in configuration, the controller asks the model for an update (and sends te updated image to the viewer)
-
-# the function to get aspect ratio from model is get_aspect_ratio

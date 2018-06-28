@@ -1,15 +1,20 @@
+from time import time
+
 import cv2
 import numpy as np
 from argparse import Namespace
 
-from visualize.get_depth_mask import get_depth_mask as get_depth
+#from visualize.get_depth_mask import get_depth_mask as get_depth
+from visualize.get_depth_mask import get_inverse_mask as get_depth
+
 from guidedFilter import fast_guided_filter_color as guided_filter
 
 
 # size hyperparameters
 PREF_LONG_SIDE = 512
-MAX_LONG_SIDE = 640
+NETWORK_MAX_LONG_SIDE = 640
 NETWORK_SIZE_DIVISOR = 16
+VIEW_MAX_LONG_SIZE = 1200
 
 # filter parameters
 RADIUS = 5
@@ -65,22 +70,33 @@ def calc_size(image_shape, target, divisor):
 def fix_image_size(image):
     Nrows, Ncolumns = calc_size(image.shape[:2], target=PREF_LONG_SIDE,
                                 divisor=NETWORK_SIZE_DIVISOR)
-    return cv2.resize(image, (Ncolumns, Nrows))
+    image = cv2.resize(image, (Ncolumns, Nrows))
+
+    return staged_resize(image, max_long_side=VIEW_MAX_LONG_SIZE)
 
 
 def get_depth_maps(image):
 
     image_sub = staged_resize(image)
 
+    init = time()
     depth_map = get_depth(image_sub)
+    elapsed = time() - init
+    print("image size:", image.shape[:2], ". Depth map time:", elapsed)
 
     size_ratio = image.shape[0] / image_sub.shape[0]
 
+    init = time()
     filtered_depth_map = guided_filter(guide=image, src=depth_map / np.max(depth_map),
                                         radius=RADIUS * size_ratio, eps=EPSILON, subsample_ratio=1)
+    elapsed = time() - init
+    print("image size:", filtered_depth_map.shape, ". Filter time:", elapsed)
 
-    filtered_depth_map = set_to_range(filtered_depth_map, min_=np.min(depth_map),
-                                     max_=np.max(depth_map))
+    print("depth range:", depth_map.max(), depth_map.min())
+    print("filtered depth range:", filtered_depth_map.max(), filtered_depth_map.min())
+
+    #filtered_depth_map = set_to_range(filtered_depth_map, min_=np.min(depth_map),
+    #                                 max_=np.max(depth_map))
 
     return depth_map, filtered_depth_map
 
@@ -104,12 +120,12 @@ def load_depth_maps(image_name):
     return depth_map, filtered_depth_map
 
 
-def set_to_range(array, min_=0, max_=1):
+def set_to_range(array, min_=0.0, max_=1.0):
 
     return (array - np.min(array)) * (max_ - min_) / (np.max(array) - np.min(array)) + min_
 
 
-def staged_resize(img, max_long_side=MAX_LONG_SIDE, size_divisor=NETWORK_SIZE_DIVISOR):
+def staged_resize(img, max_long_side=NETWORK_MAX_LONG_SIDE, size_divisor=NETWORK_SIZE_DIVISOR):
 
     while max(img.shape[:2]) > max_long_side and np.mod(img.shape[0]/2, size_divisor) == 0 and \
             np.mod(img.shape[1]/2, size_divisor) == 0:
@@ -153,9 +169,6 @@ def update_blur_maps(model):
 
     foreground_blur_curve = 1 - 1 / ((1 + focus_start - depth_map) ** fg_power)
     foreground_blur_curve = foreground_blur_curve / (1 - 1 / ((1 + focus_start) ** fg_power))
-
-    #  פרמטרים שאפשר להוסיף למשתמש: שליטה בסיגמה (כמה טשטוש) ובחזקה (מהירות ההתקדמות של הטשטוש)
-    # כל אחד מאלה אפשר להפריד לחלק קדמי ואחורי
 
     blur_weights = np.zeros(shape=image.shape, dtype=np.float32)
     np.copyto(blur_weights, background_blur_curve, where=segments == 3)
@@ -208,3 +221,59 @@ def calc_blur(model):
     np.copyto(model.blur, fg_blur / fg_normalization, where=segments == 0)
 
     model.blurred_image = (blur_weights * model.blur + (1 - blur_weights) * original_image)
+
+def init_haze_variables(model):
+    model.ambient = {"val": 0.5, "from_": 0.01, "to_": 1}
+    model.beta = {"val": -1, "from_": 0.01, "to_": 3}
+
+def calc_haze(model):
+    ambient = model.ambient["val"]
+    beta = model.beta["val"]
+    original_image = model.original_image
+    depth_map = model.filtered_depth_map
+
+    haze_weights = np.exp(-beta * depth_map)
+    haze_weights = np.transpose(np.repeat(haze_weights[:, np.newaxis], 3, axis=1), [0, 2, 1])
+    model.haze_image = haze_weights * original_image + (1-haze_weights) * ambient
+
+
+implemented_transformations = {"fliplr": [np.fliplr, np.fliplr], "flipud": [np.flipud, np.flipud]}
+
+def get_flip(model, image_name, transformation):
+
+    if not transformation in implemented_transformations.keys():
+        raise ValueError("this transformation is not implemented")
+
+    func = implemented_transformations[transformation][0]
+    inv_func = implemented_transformations[transformation][1]
+
+    name = image_name + "_" + transformation
+
+    trans_image = func(model.original_image).copy()
+
+    try:
+        depth_map, filtered_depth_map = load_depth_maps(name)
+        assert filtered_depth_map.shape == trans_image.shape[:2]
+    except (AssertionError, FileNotFoundError):
+        depth_map, filtered_depth_map = get_depth_maps(trans_image)
+        save_depth_maps(name, depth_map, filtered_depth_map)
+
+
+    depth_straight = set_to_range(inv_func(depth_map))
+    filt_depth_straight = set_to_range(inv_func(filtered_depth_map))
+    model.filtered_depth_map = set_to_range(model.filtered_depth_map)
+    depth_diff = model.filtered_depth_map - filt_depth_straight
+    depth_diff = set_to_range(depth_diff)
+
+    setattr(model, "image_" + transformation, trans_image)
+    setattr(model, "depth_" + transformation, depth_map)
+    setattr(model, "filtered_depth_" + transformation, filtered_depth_map)
+    setattr(model, "depth_" + transformation + "_straight", depth_straight)
+    setattr(model, "filt_depth_" + transformation + "_straight", filt_depth_straight)
+    setattr(model, "depth_diff_" + transformation, depth_diff)
+
+    model.stable_viewables.extend(["image_" + transformation, "depth_" + transformation,
+                                   "filtered_depth_" + transformation,
+                                   "depth_" + transformation + "_straight",
+                                   "filt_depth_" + transformation + "_straight",
+                                   "depth_diff_" + transformation])

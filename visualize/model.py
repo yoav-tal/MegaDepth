@@ -33,12 +33,54 @@ class Model:
         calc_blur(self)
 
         self.stable_viewables = ["original_image", "depth_map", "filtered_depth_map"]
+
         self.updating_viewables = ["segments_map", "image_copy", "blur", "blur_weights",
                                    "blurred_image"]
 
-        self.blur_variables = ["focal", "bg_sigma", "bg_power",
+        self.control_variables = ["focal", "bg_sigma", "bg_power",
                                "coc_min", "fg_sigma", "fg_power"]
 
     def update_images(self):
         update_blur_maps(self)
         calc_blur(self)
+
+class HazeModel:
+
+    def __init__(self, image, image_name):
+        self.original_image = fix_image_size(image)
+
+        try:
+            self.depth_map, self.filtered_depth_map = load_depth_maps(image_name)
+            assert self.filtered_depth_map.shape == self.original_image.shape[:2]
+
+        except (AssertionError, FileNotFoundError):
+            self.depth_map, self.filtered_depth_map = get_depth_maps(self.original_image)
+            save_depth_maps(image_name, self.depth_map, self.filtered_depth_map)
+
+        self.ambient, self.beta = [None] * 2
+
+        init_haze_variables(self)
+
+        self.haze_image = None
+
+        calc_haze(self)
+
+        self.stable_viewables = ["original_image", "filtered_depth_map"]
+
+        self.updating_viewables = ["haze_image"]
+
+        self.control_variables = ["ambient", "beta"]
+
+    def update_images(self):
+        calc_haze(self)
+
+class FlipModel(Model):
+    def __init__(self, image, image_name):
+        super().__init__(image, image_name)
+
+        #self.updating_viewables = []
+        #self.control_variables = []
+
+        #get_flip(self, image_name, "flipud")
+        #get_flip(self, image_name, "fliplr")
+
