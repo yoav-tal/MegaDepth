@@ -23,8 +23,8 @@ class Control:
         # set up a model with the image
         #self.MODEL = model.Model(cv2.imread(path).astype(float) / 255.0, image_name)
         #self.MODEL = model.HazeModel(cv2.imread(path).astype(float) / 255.0, image_name)
-        self.MODEL = model.FlipModel(cv2.imread(path).astype(float) / 255.0, image_name)
-
+        #self.MODEL = model.FlipModel(cv2.imread(path).astype(float) / 255.0, image_name)
+        self.MODEL = model.ARFModel(cv2.imread(path).astype(float) / 255.0, image_name)
 
         # set up a viewer
         self.VIEWER = viewer.viewer(self.master)

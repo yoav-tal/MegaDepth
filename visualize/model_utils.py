@@ -23,6 +23,7 @@ EPSILON = 1e-2
 # paths
 DEPTH_FOLDER = "/Users/yoav/MegaDepth/depths/"
 
+DELTA = 1e-5
 
 def calc_size(image_shape, target, divisor):
     # Finds new size with nearest aspect ratio such that after downsampling by factors of 2 the
@@ -134,22 +135,32 @@ def staged_resize(img, max_long_side=NETWORK_MAX_LONG_SIDE, size_divisor=NETWORK
 
     return img
 
+def calc_segments(model):
+    inv_depth_map = model.filtered_depth_map
+    focal = model.focal["val"]
+    coc_min = model.coc_min["val"]
+    coc_at_inf =model.coc_at_inf["val"]
+
+    model.coc_map = coc_at_inf * abs(1 - inv_depth_map / focal)
+    model.inv_focus_start = (coc_at_inf + coc_min) * focal / coc_at_inf
+    model.inv_focus_end = (coc_at_inf - coc_min)  * focal / coc_at_inf
+
+    model.segments_map = 1 + (-1 * (inv_depth_map > model.inv_focus_start) + 2 * (inv_depth_map <
+                                                                      model.inv_focus_end))
+    # in segments: 0 - foreground ; 1 - focus ; 3 - background
 
 def update_blur_maps(model):
     image = model.original_image
-    depth_map = model.filtered_depth_map
+    inv_depth_map = model.filtered_depth_map
 
-    focal = model.focal["val"]
-    coc_min = model.coc_min["val"]
     bg_power = model.bg_power["val"]
     fg_power = model.fg_power["val"]
 
-    focus_start = focal / (1 + coc_min)
-    focus_end = focal / (1 - coc_min)
+    calc_segments(model)
 
-    segments = 1 + (-1 * (depth_map < focus_start) + 2 * (depth_map > focus_end))
-    # in segments: 0 - foreground ; 1 - focus ; 3 - background
-    model.segments_map = segments
+    segments = model.segments_map
+    inv_focus_start = model.inv_focus_start
+    inv_focus_end = model.inv_focus_end
 
     segments = np.transpose(np.repeat(segments[:, np.newaxis], 3, axis=1), [0, 2, 1])
 
@@ -159,16 +170,16 @@ def update_blur_maps(model):
 
     model.image_copy = img_copy
 
-    depth_map = np.transpose(np.repeat(depth_map[:, np.newaxis], 3, axis=1), [0, 2, 1])
+    depth_map = np.transpose(np.repeat(inv_depth_map[:, np.newaxis], 3, axis=1), [0, 2, 1])
 
     max_depth = np.max(depth_map)
 
-    background_blur_curve = 1 - 1 / ((depth_map - focus_end + 1) ** bg_power)
-    background_blur_curve = background_blur_curve / (1 - 1 / ((max_depth - focus_end +1)
-                                                              ** bg_power))
+    foreground_blur_curve = 1 - 1 / ((depth_map - inv_focus_start + 1) ** fg_power)
+    foreground_blur_curve = foreground_blur_curve / (1 - 1 / ((max_depth - inv_focus_start +1)
+                                                              ** fg_power))
 
-    foreground_blur_curve = 1 - 1 / ((1 + focus_start - depth_map) ** fg_power)
-    foreground_blur_curve = foreground_blur_curve / (1 - 1 / ((1 + focus_start) ** fg_power))
+    background_blur_curve = 1 - 1 / ((1 + inv_focus_end - depth_map) ** bg_power)
+    background_blur_curve = background_blur_curve / (1 - 1 / ((1 + inv_focus_end) ** bg_power))
 
     blur_weights = np.zeros(shape=image.shape, dtype=np.float32)
     np.copyto(blur_weights, background_blur_curve, where=segments == 3)
@@ -181,8 +192,10 @@ def init_blur_variables(model):
     min_val = np.min(model.filtered_depth_map)
     max_val = np.max(model.filtered_depth_map)
 
-    model.focal = {"val": (max_val - min_val)/2, "from_": min_val, "to_": max_val}
+    model.focal = {"val": 0.5, "from_": min_val, "to_": max_val}
     model.coc_min = {"val": .5, "from_": 0.01, "to_": 1 - 0.01}
+    model.coc_at_inf = {"val": 1, "from_": 1, "to_": 8}
+
     model.bg_sigma = {"val": 5, "from_": 0.5, "to_": 15}
     model.fg_sigma = {"val": 5, "from_": 0.5, "to_": 15}
     model.bg_power = {"val": 3, "from_": 0.05, "to_":15}
@@ -224,20 +237,32 @@ def calc_blur(model):
 
 def init_haze_variables(model):
     model.ambient = {"val": 0.5, "from_": 0.01, "to_": 1}
-    model.beta = {"val": -1, "from_": 0.01, "to_": 3}
+    model.beta = {"val": 1, "from_": 0.01, "to_": 3}
+    model.end_haze = {"val": 0.5, "from_": 0.01, "to_": 1}
 
 def calc_haze(model):
     ambient = model.ambient["val"]
     beta = model.beta["val"]
-    original_image = model.original_image
-    depth_map = model.filtered_depth_map
+    end_haze = model.end_haze["val"]
 
-    haze_weights = np.exp(-beta * depth_map)
+    original_image = model.original_image
+    depth_map = model.filtered_depth_map + 1e-5 # set_to_range(model.depth_map)
+
+
+    haze_weights = np.minimum(np.exp(-(beta * end_haze) / depth_map) / np.exp(-beta) , 1) ** 2
     haze_weights = np.transpose(np.repeat(haze_weights[:, np.newaxis], 3, axis=1), [0, 2, 1])
     model.haze_image = haze_weights * original_image + (1-haze_weights) * ambient
 
 
-implemented_transformations = {"fliplr": [np.fliplr, np.fliplr], "flipud": [np.flipud, np.flipud]}
+def rot90(img):
+    return(np.rot90(img, 1, (0,1)))
+
+def rotNEG90(img):
+    return np.rot90(img, -1, (0,1))
+
+implemented_transformations = {"fliplr": [np.fliplr, np.fliplr], "flipud": [np.flipud,np.flipud],
+                               "rot90": [rot90, rotNEG90], "rotNEG90":[rotNEG90, rot90]}
+
 
 def get_flip(model, image_name, transformation):
 
@@ -259,9 +284,8 @@ def get_flip(model, image_name, transformation):
         save_depth_maps(name, depth_map, filtered_depth_map)
 
 
-    depth_straight = set_to_range(inv_func(depth_map))
-    filt_depth_straight = set_to_range(inv_func(filtered_depth_map))
-    model.filtered_depth_map = set_to_range(model.filtered_depth_map)
+    depth_straight = inv_func(depth_map)
+    filt_depth_straight = inv_func(filtered_depth_map)
     depth_diff = model.filtered_depth_map - filt_depth_straight
     depth_diff = set_to_range(depth_diff)
 
@@ -277,3 +301,67 @@ def get_flip(model, image_name, transformation):
                                    "depth_" + transformation + "_straight",
                                    "filt_depth_" + transformation + "_straight",
                                    "depth_diff_" + transformation])
+
+def ARF_blur(model):
+
+    img = model.original_image
+    n_iter = int(model.n_iter["val"] * 100)
+    n_rows, n_columns = img.shape[:2]
+
+    calc_segments(model)
+    segments = model.segments_map
+    coc_map = model.coc_map
+
+    cases_horizontal = np.abs(np.diff(segments, n=1, axis=1))
+    cases_vertical = np.abs(np.diff(segments, n=1, axis=0))
+    # in cases: 0 - case 1 ; 1%2 - case 2 or 4 ; 2 - case 3
+
+    weights_horizontal = get_weights(coc_map[:, 1:], coc_map[:, :-1], cases_horizontal, DELTA=DELTA)
+    weights_vertical = get_weights(coc_map[1:, :], coc_map[:-1, :], cases_vertical, DELTA=DELTA)
+
+    weights_horizontal = np.repeat(weights_horizontal[:, np.newaxis], 3, axis=1)
+    weights_vertical = np.transpose(np.repeat(weights_vertical[:, np.newaxis], 3, axis=1),
+                                    axes=[0, 2, 1])
+
+    for i in range(n_iter):
+
+        image_lr_blur = horizontal_blur(np.array(img, copy=True), weights_horizontal, n_columns - 1)
+        image_rl_blur = horizontal_blur(np.fliplr(np.array(img, copy=True)),
+                                        np.fliplr(weights_horizontal), n_columns - 1)
+
+        image_ud_blur = vertical_blur(np.array(img, copy=True), weights_vertical, n_rows - 1)
+        image_du_blur = vertical_blur(np.flipud(np.array(img, copy=True)),
+                                      np.flipud(weights_vertical), n_rows - 1)
+
+        img = 0.25*(image_lr_blur + np.fliplr(image_rl_blur) + image_ud_blur +
+                    np.flipud(image_du_blur))
+
+    model.ARF_blur = img
+    model.segments_map = segments
+
+
+def get_weights(coc_map1, coc_map2, cases, DELTA=1e-5):
+    pre_weights = 0.5 * (coc_map1 + coc_map2)
+    np.copyto(dst=pre_weights, src=np.maximum(coc_map1, coc_map2), where=(np.mod(
+        cases, 2) == 1))  # max should be taken over a neighborhood
+    np.copyto(dst=pre_weights, src=np.minimum(coc_map1, coc_map2),
+              where=(cases == 2))
+
+    weights = np.exp(-1/pre_weights, where=pre_weights >= DELTA)
+    np.place(arr=weights, mask=pre_weights < DELTA, vals=0)
+
+    return weights
+
+def horizontal_blur(img, weights, N):
+    for i in range(N-1):
+        img[:, i+1] = np.multiply(1-weights[:, :, i], img[:, i+1]) + np.multiply(weights[:, :, i],
+                                                                    img[:, i])
+
+    return img
+
+def vertical_blur(img, weights, N):
+    for i in range(N-1):
+        img[i+1, :] = np.multiply(1-weights[i, :, :], img[i+1, :]) + np.multiply(weights[i, :, :],
+                                                                    img[i, :])
+
+    return img
