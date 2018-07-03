@@ -16,7 +16,7 @@ class Control:
 
         # open file dialog
         path = filedialog.askopenfilename(initialdir = "/Users/yoav/MegaDepth/images")
-        #path = '/Users/yoav/MegaDepth/images/city.png'
+        #path = '/Users/yoav/MegaDepth/images/cars.jpeg'
 
         image_name = path.split('/')[-1].split('.')[0]
         print("image name:", image_name)
@@ -24,7 +24,9 @@ class Control:
         #self.MODEL = model.Model(cv2.imread(path).astype(float) / 255.0, image_name)
         #self.MODEL = model.HazeModel(cv2.imread(path).astype(float) / 255.0, image_name)
         #self.MODEL = model.FlipModel(cv2.imread(path).astype(float) / 255.0, image_name)
-        self.MODEL = model.ARFModel(cv2.imread(path).astype(float) / 255.0, image_name)
+        #self.MODEL = model.ARFModel(cv2.imread(path).astype(float) / 255.0, image_name)
+        #self.MODEL = model.GFstudy(cv2.imread(path).astype(float) / 255.0, image_name)
+        self.MODEL = model.ScaleModel(cv2.imread(path).astype(float) / 255.0, image_name)
 
         # set up a viewer
         self.VIEWER = viewer.viewer(self.master)

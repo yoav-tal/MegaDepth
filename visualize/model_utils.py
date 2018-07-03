@@ -25,6 +25,35 @@ DEPTH_FOLDER = "/Users/yoav/MegaDepth/depths/"
 
 DELTA = 1e-5
 
+def init_depth_maps(model, image_name, radius=RADIUS, epsilon=EPSILON):
+
+    try:
+        model.depth_map, model.filtered_depth_map = load_depth_maps(image_name)
+        assert model.filtered_depth_map.shape == model.original_image.shape[:2]
+
+    except (AssertionError, FileNotFoundError):
+        model.depth_map, model.filtered_depth_map = get_depth_maps(model.original_image,
+                                                                   radius=radius, epsilon=epsilon)
+        save_depth_maps(image_name, model.depth_map, model.filtered_depth_map)
+
+    except AttributeError:
+        model.filtered_depth_map = get_depth_maps(model.original_image, radius=radius,
+                                                  epsilon=epsilon, depth_map=model.depth_map)[1]
+        save_depth_maps(image_name, model.depth_map, model.filtered_depth_map)
+
+
+def init_scaled_depth_maps(model, image_name):
+
+    image_name = image_name + "_SCALED"
+
+    try:
+        model.scaled_depth_maps, model.filtered_depth_maps = load_depth_maps(image_name)
+    except FileNotFoundError:
+        model.scaled_depth_maps, model.filtered_depth_maps = get_scaled_depth_maps(
+            model.scaleable_image)
+        save_depth_maps(image_name, model.scaled_depth_maps, model.filtered_depth_maps)
+
+
 def calc_size(image_shape, target, divisor):
     # Finds new size with nearest aspect ratio such that after downsampling by factors of 2 the
     # long egde is near target and both edges are a multiple of divisor.
@@ -68,38 +97,54 @@ def calc_size(image_shape, target, divisor):
         return new_short, new_long
 
 
-def fix_image_size(image):
-    Nrows, Ncolumns = calc_size(image.shape[:2], target=PREF_LONG_SIDE,
-                                divisor=NETWORK_SIZE_DIVISOR)
+def fix_image_size(image, target=PREF_LONG_SIDE, divisor=NETWORK_SIZE_DIVISOR):
+    Nrows, Ncolumns = calc_size(image.shape[:2], target=target, divisor=divisor)
     image = cv2.resize(image, (Ncolumns, Nrows))
 
     return staged_resize(image, max_long_side=VIEW_MAX_LONG_SIZE)
 
 
-def get_depth_maps(image):
+def get_depth_maps(image, radius=RADIUS, epsilon=EPSILON, depth_map=None):
 
     image_sub = staged_resize(image)
 
-    init = time()
-    depth_map = get_depth(image_sub)
-    elapsed = time() - init
-    print("image size:", image.shape[:2], ". Depth map time:", elapsed)
+    if depth_map is None:
+        init = time()
+        depth_map = get_depth(image_sub)
+        elapsed = time() - init
+        print("image size:", image.shape[:2], ". Depth map time:", elapsed)
 
     size_ratio = image.shape[0] / image_sub.shape[0]
 
     init = time()
     filtered_depth_map = guided_filter(guide=image, src=depth_map / np.max(depth_map),
-                                        radius=RADIUS * size_ratio, eps=EPSILON, subsample_ratio=1)
+                                        radius=radius * size_ratio, eps=epsilon, subsample_ratio=1)
     elapsed = time() - init
     print("image size:", filtered_depth_map.shape, ". Filter time:", elapsed)
+    print("calulated with radius:", radius, " ; epsilon:", epsilon)
 
     print("depth range:", depth_map.max(), depth_map.min())
     print("filtered depth range:", filtered_depth_map.max(), filtered_depth_map.min())
 
-    #filtered_depth_map = set_to_range(filtered_depth_map, min_=np.min(depth_map),
-    #                                 max_=np.max(depth_map))
-
     return depth_map, filtered_depth_map
+
+def get_scaled_depth_maps(image, radius=RADIUS, epsilon=EPSILON):
+
+    image_sub = staged_resize(image)
+
+    depth_maps = []
+    filtered_depth_maps = []
+
+    for scale in range(3):
+        img_scaled = staged_resize(image_sub, times=scale)
+        depth_scaled = get_depth(img_scaled)
+
+        depth_maps.append(depth_scaled)
+        filtered_depth_maps.append(guided_filter(guide=image_sub, src=depth_scaled / np.max(
+            depth_scaled), radius=radius * (2 ** scale), eps=epsilon, subsample_ratio=1))
+
+    return depth_maps, filtered_depth_maps
+
 
 def save_depth_maps(image_name, depth_map, filtered_depth_map):
 
@@ -116,7 +161,11 @@ def load_depth_maps(image_name):
     filtered_depth_path = DEPTH_FOLDER + image_name + "_DEPTH_filtered.npy"
 
     depth_map = np.load(depth_path)
-    filtered_depth_map = np.load(filtered_depth_path)
+
+    try:
+        filtered_depth_map = np.load(filtered_depth_path)
+    except FileNotFoundError:
+        return depth_map, None
 
     return depth_map, filtered_depth_map
 
@@ -126,12 +175,18 @@ def set_to_range(array, min_=0.0, max_=1.0):
     return (array - np.min(array)) * (max_ - min_) / (np.max(array) - np.min(array)) + min_
 
 
-def staged_resize(img, max_long_side=NETWORK_MAX_LONG_SIDE, size_divisor=NETWORK_SIZE_DIVISOR):
+def staged_resize(img, times=None, max_long_side=NETWORK_MAX_LONG_SIDE, \
+                                           size_divisor=NETWORK_SIZE_DIVISOR):
 
-    while max(img.shape[:2]) > max_long_side and np.mod(img.shape[0]/2, size_divisor) == 0 and \
+    if times:
+        for i in range(times):
+            img = cv2.resize(img, (0, 0), fx=0.5, fy=0.5)
+
+    else:
+        while max(img.shape[:2]) > max_long_side and np.mod(img.shape[0]/2, size_divisor) == 0 and \
             np.mod(img.shape[1]/2, size_divisor) == 0:
 
-        img = cv2.resize(img, (0, 0), fx=0.5, fy=0.5)
+            img = cv2.resize(img, (0, 0), fx=0.5, fy=0.5)
 
     return img
 
@@ -225,8 +280,8 @@ def calc_blur(model):
     bg_normalization = cv2.GaussianBlur(binary_segments, (bg_ksize, bg_ksize), bg_sigma)
     fg_normalization = cv2.GaussianBlur(binary_segments, (fg_ksize, fg_ksize), fg_sigma)
 
-    np.copyto(bg_normalization, 1e-5, where= bg_normalization == 0)
-    np.copyto(fg_normalization, 1e-5, where= fg_normalization == 0)
+    np.copyto(bg_normalization, 1e-5, where= bg_normalization < 1e-5)
+    np.copyto(fg_normalization, 1e-5, where= fg_normalization < 1e-5)
 
     model.blur = np.copy(img_copy)
 
@@ -245,8 +300,8 @@ def calc_haze(model):
     beta = model.beta["val"]
     end_haze = model.end_haze["val"]
 
-    original_image = model.original_image
-    depth_map = model.filtered_depth_map + 1e-5 # set_to_range(model.depth_map)
+    original_image = model.original_image # staged_resize(model.original_image)
+    depth_map = model.filtered_depth_map + 1e-5 #set_to_range(model.depth_map) #
 
 
     haze_weights = np.minimum(np.exp(-(beta * end_haze) / depth_map) / np.exp(-beta) , 1) ** 2
