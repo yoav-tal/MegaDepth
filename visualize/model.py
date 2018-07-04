@@ -14,13 +14,11 @@ class Model:
         init_depth_maps(self, image_name)
 
 
-
-        self.focal, self.coc_min, self.bg_sigma, self.fg_sigma, self.bg_power, \
-        self.fg_power = [None] * 6
+        self.focal, self.coc_min, self.blur_sigma = [None] * 3
 
         init_blur_variables(self)
 
-        self.segments_map, self.image_copy, self.blur_weights = [None] * 3
+        self.segments_map, self.image_copy_OOF, self.image_copy_FG, self.blur_weights = [None] * 4
 
         update_blur_maps(self)
 
@@ -30,11 +28,10 @@ class Model:
 
         self.stable_viewables = ["original_image", "depth_map", "filtered_depth_map"]
 
-        self.updating_viewables = ["segments_map", "image_copy", "blur", "blur_weights",
+        self.updating_viewables = ["segments_map", "image_copy_OOF", "blur", "blur_weights",
                                    "blurred_image"]
 
-        self.control_variables = ["focal", "bg_sigma", "bg_power",
-                               "coc_min", "fg_sigma", "fg_power"]
+        self.control_variables = ["focal", "blur_sigma", "coc_min"]
 
     def update_images(self):
         update_blur_maps(self)

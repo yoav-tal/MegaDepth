@@ -41,6 +41,7 @@ def init_depth_maps(model, image_name, radius=RADIUS, epsilon=EPSILON):
                                                   epsilon=epsilon, depth_map=model.depth_map)[1]
         save_depth_maps(image_name, model.depth_map, model.filtered_depth_map)
 
+    model.depth_values = model.filtered_depth_map * np.max(model.depth_map)
 
 def init_scaled_depth_maps(model, image_name):
 
@@ -194,11 +195,11 @@ def calc_segments(model):
     inv_depth_map = model.filtered_depth_map
     focal = model.focal["val"]
     coc_min = model.coc_min["val"]
-    coc_at_inf =model.coc_at_inf["val"]
+    coc_at_inf = 1 #model.coc_at_inf["val"]
 
     model.coc_map = coc_at_inf * abs(1 - inv_depth_map / focal)
-    model.inv_focus_start = (coc_at_inf + coc_min) * focal / coc_at_inf
-    model.inv_focus_end = (coc_at_inf - coc_min)  * focal / coc_at_inf
+    model.inv_focus_start = min((coc_at_inf + coc_min) * focal / coc_at_inf, 1 - 1e-6)
+    model.inv_focus_end = max((coc_at_inf - coc_min)  * focal / coc_at_inf, 1e-6)
 
     model.segments_map = 1 + (-1 * (inv_depth_map > model.inv_focus_start) + 2 * (inv_depth_map <
                                                                       model.inv_focus_end))
@@ -208,8 +209,8 @@ def update_blur_maps(model):
     image = model.original_image
     inv_depth_map = model.filtered_depth_map
 
-    bg_power = model.bg_power["val"]
-    fg_power = model.fg_power["val"]
+    #bg_power = model.bg_power["val"]
+    #fg_power = model.fg_power["val"]
 
     calc_segments(model)
 
@@ -219,27 +220,32 @@ def update_blur_maps(model):
 
     segments = np.transpose(np.repeat(segments[:, np.newaxis], 3, axis=1), [0, 2, 1])
 
-    img_copy = np.copy(image)
+    img_copy_OOF = np.copy(image)
+    img_copy_FG = np.copy(image)
 
-    np.copyto(img_copy, 0, where=segments == 1)
+    np.copyto(img_copy_OOF, 0, where=segments == 1)
+    np.copyto(img_copy_FG, 0, where=segments > 0)
 
-    model.image_copy = img_copy
+    model.image_copy_OOF = img_copy_OOF
+    model.image_copy_FG = img_copy_FG
 
     depth_map = np.transpose(np.repeat(inv_depth_map[:, np.newaxis], 3, axis=1), [0, 2, 1])
 
     max_depth = np.max(depth_map)
 
-    foreground_blur_curve = 1 - 1 / ((depth_map - inv_focus_start + 1) ** fg_power)
-    foreground_blur_curve = foreground_blur_curve / (1 - 1 / ((max_depth - inv_focus_start +1)
-                                                              ** fg_power))
+    foreground_blur_weights = 1 - (depth_map - inv_focus_start) / (1 - inv_focus_start)
+    #foreground_blur_curve = 1 - 1 / ((depth_map - inv_focus_start + 1) ** fg_power)
+    #foreground_blur_curve = foreground_blur_curve / (1 - 1 / ((max_depth - inv_focus_start +1)
+    #                                                         ** fg_power))
 
-    background_blur_curve = 1 - 1 / ((1 + inv_focus_end - depth_map) ** bg_power)
-    background_blur_curve = background_blur_curve / (1 - 1 / ((1 + inv_focus_end) ** bg_power))
+    background_blur_weights = depth_map / inv_focus_end
+    #background_blur_curve: 1 - 1 / ((1 + inv_focus_end - depth_map) ** bg_power)
+    #background_blur_curve = background_blur_curve / (1 - 1 / ((1 + inv_focus_end) ** bg_power))
 
     blur_weights = np.zeros(shape=image.shape, dtype=np.float32)
-    np.copyto(blur_weights, background_blur_curve, where=segments == 3)
-    np.copyto(blur_weights, foreground_blur_curve, where=segments == 0)
-
+    np.copyto(blur_weights, background_blur_weights, where=segments == 3)
+    np.copyto(blur_weights, foreground_blur_weights, where=segments == 0)
+    np.copyto(blur_weights, 1, where=segments==1)
     model.blur_weights = blur_weights
 
 
@@ -249,46 +255,79 @@ def init_blur_variables(model):
 
     model.focal = {"val": 0.5, "from_": min_val, "to_": max_val}
     model.coc_min = {"val": .5, "from_": 0.01, "to_": 1 - 0.01}
-    model.coc_at_inf = {"val": 1, "from_": 1, "to_": 8}
+    #model.coc_at_inf = {"val": 1, "from_": 1, "to_": 8}
 
-    model.bg_sigma = {"val": 5, "from_": 0.5, "to_": 15}
-    model.fg_sigma = {"val": 5, "from_": 0.5, "to_": 15}
-    model.bg_power = {"val": 3, "from_": 0.05, "to_":15}
-    model.fg_power = {"val": 3, "from_": 0.05, "to_":15}
-
+    #model.bg_sigma = {"val": 5, "from_": 0.5, "to_": 15}
+    #model.fg_sigma = {"val": 5, "from_": 0.5, "to_": 15}
+    #model.bg_power = {"val": 3, "from_": 0.05, "to_":15}
+    #model.fg_power = {"val": 3, "from_": 0.05, "to_":15}
+    model.blur_sigma = {"val": 5, "from_": 0.5, "to_": 15}
 
 def calc_blur(model):
 
-    original_image = model.original_image
-    img_copy = model.image_copy
+
+    bg_blur = calc_bg_blur()
+    fg_blur = calc_fg_blur()
+    fg_leak_weights = clac_fg_leak_weights()
+    model.blurred_image =
+
+
+    img_copy_OOF = model.image_copy_OOF
+    img_copy_FG = model.image_copy_FG
     blur_weights = model.blur_weights
     segments = model.segments_map
-    bg_sigma = model.bg_sigma["val"]
-    fg_sigma = model.fg_sigma["val"]
-    bg_ksize = 2 * round(bg_sigma) + 1
-    fg_ksize = 2 * round(fg_sigma) + 1
+    focal = 1 / model.focal["val"]
+    d_min = 1 / model.depth_map.max()
+    blur_sigma = model.blur_sigma["val"]
 
+
+    bg_sigma = blur_sigma
+    bg_ksize = 2 * int(round(bg_sigma)) + 1
+
+    fg_sigma = blur_sigma #(focal / d_min - 1) *
+    fg_ksize = 2 * int(round(fg_sigma)) + 1
+    #print(bg_ksize, fg_ksize)
+    base_sigma = 1
+    base_ksize = 2 * base_sigma + 1
 
     #blur_weights = np.transpose(np.repeat(blur_weights[:, np.newaxis], 3, axis=1), [0, 2, 1])
     segments = np.transpose(np.repeat(segments[:, np.newaxis], 3, axis=1), [0, 2, 1])
 
-    bg_blur = cv2.GaussianBlur(img_copy, (bg_ksize, bg_ksize), bg_sigma)
-    fg_blur = cv2.GaussianBlur(img_copy, (fg_ksize, fg_ksize), fg_sigma)
+    bg_blur = cv2.GaussianBlur(img_copy_OOF, (bg_ksize, bg_ksize), bg_sigma)
+    fg_blur = cv2.GaussianBlur(img_copy_FG, (fg_ksize, fg_ksize), fg_sigma)
+    base_blur_bg = cv2.GaussianBlur(img_copy_OOF, (base_ksize, base_ksize), base_sigma)
+    base_blur_fg = cv2.GaussianBlur(img_copy_FG, (base_ksize, base_ksize), base_sigma)
 
-    binary_segments = np.float32(np.abs(np.sign(segments - 1)))
+    binary_segments_OOF = np.zeros_like(model.original_image)
+    np.copyto(binary_segments_OOF, 1, where=segments!=1)
 
-    bg_normalization = cv2.GaussianBlur(binary_segments, (bg_ksize, bg_ksize), bg_sigma)
-    fg_normalization = cv2.GaussianBlur(binary_segments, (fg_ksize, fg_ksize), fg_sigma)
+    binary_segments_FG = np.zeros_like(model.original_image)
+    np.copyto(binary_segments_FG, 1, where=segments==0)
+
+    bg_normalization = cv2.GaussianBlur(binary_segments_OOF, (bg_ksize, bg_ksize), bg_sigma)
+    fg_normalization = cv2.GaussianBlur(binary_segments_FG, (fg_ksize, fg_ksize), fg_sigma)
+    base_normalization_bg =  cv2.GaussianBlur(binary_segments_OOF, (base_ksize, base_ksize),
+                                           base_sigma)
+    base_normalization_fg = cv2.GaussianBlur(binary_segments_FG, (base_ksize, base_ksize),
+                                           base_sigma)
 
     np.copyto(bg_normalization, 1e-5, where= bg_normalization < 1e-5)
     np.copyto(fg_normalization, 1e-5, where= fg_normalization < 1e-5)
+    np.copyto(base_normalization_bg, 1e-5, where= base_normalization_bg < 1e-5)
+    np.copyto(base_normalization_fg, 1e-5, where= base_normalization_fg < 1e-5)
 
-    model.blur = np.copy(img_copy)
+    model.blur = np.copy(img_copy_OOF)
 
     np.copyto(model.blur, bg_blur / bg_normalization, where=segments == 3)
     np.copyto(model.blur, fg_blur / fg_normalization, where=segments == 0)
 
-    model.blurred_image = (blur_weights * model.blur + (1 - blur_weights) * original_image)
+    base_blur_with_focus = np.copy(model.original_image)
+    np.copyto(base_blur_with_focus, base_blur_bg / base_normalization_bg, where=segments == 3)
+    np.copyto(base_blur_with_focus, base_blur_fg / base_normalization_fg, where=segments == 0)
+
+    model.blurred_image = (blur_weights * base_blur_with_focus +
+                        (1 - blur_weights) * model.blur)
+
 
 def init_haze_variables(model):
     model.ambient = {"val": 0.5, "from_": 0.01, "to_": 1}
