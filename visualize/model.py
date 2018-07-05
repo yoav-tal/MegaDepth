@@ -14,11 +14,12 @@ class Model:
         init_depth_maps(self, image_name)
 
 
-        self.focal, self.coc_min, self.blur_sigma = [None] * 3
+        self.focal, self.coc_min, self.bg_sigma, self.bg_sigma, \
+        self.bg_power, self.fg_power = [None] * 6
 
         init_blur_variables(self)
 
-        self.segments_map, self.image_copy_OOF, self.image_copy_FG, self.blur_weights = [None] * 4
+        self.segments_map, self.image_copy_BG, self.image_copy_FG, self.blur_weights = [None] * 4
 
         update_blur_maps(self)
 
@@ -28,10 +29,11 @@ class Model:
 
         self.stable_viewables = ["original_image", "depth_map", "filtered_depth_map"]
 
-        self.updating_viewables = ["segments_map", "image_copy_OOF", "blur", "blur_weights",
+        self.updating_viewables = ["segments_map", "image_copy_FG", "blur_weights",
                                    "blurred_image"]
 
-        self.control_variables = ["focal", "blur_sigma", "coc_min"]
+        self.control_variables = ["focal", "bg_sigma", "fg_sigma", "coc_min",
+                                  "bg_power", "fg_power"]
 
     def update_images(self):
         update_blur_maps(self)
@@ -143,7 +145,12 @@ class ScaleModel(Model):
         #set_to_range(self.depth_map)#self.filtered_averaged_depth_map#
         #super().update_images()
 
+class SmallViewModel(Model):
+    def __init__(self, image, image_name):
 
+        image = staged_resize(fix_image_size(image))
+        image_name
+        super().__init__(image, image_name)
 '''
         
         
