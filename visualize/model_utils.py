@@ -262,83 +262,60 @@ def update_blur_maps(model):
 
 def calc_blur(model):
 
-    bg_blur = calc_segment_blur(img=model.original_image, segments=model.segments_map,
+    image = model.original_image
+    segments = model.segments_map
+
+    bg_blur = calc_bg_blur(image=image, segments=segments,
                                 blur_weights = model.blur_weights,
                                 blur_sigma = model.bg_sigma["val"], segment_indicator=3)
-    fg_blur = calc_segment_blur(img=model.original_image, segments=model.segments_map,
-                                blur_weights = model.blur_weights,
-                                blur_sigma = model.fg_sigma["val"], segment_indicator=0, leak=False)
+    fg_blur = calc_fg_blur(image=image, blur_weights = model.blur_weights,
+                                blur_sigma = model.fg_sigma["val"], model=model)
 
     model.blurred_image = model.original_image.copy()
-    np.copyto(model.blurred_image, bg_blur, where=model.segments_map==3)
-    np.copyto(model.blurred_image, fg_blur, where=model.segments_map==0)
+    np.copyto(model.blurred_image, bg_blur, where=model.segments_map == 3)
+    np.copyto(model.blurred_image, fg_blur, where=model.segments_map < 3)
 
-    #leak_segment = calc_fg_leak(image=model.blurred_image, leak=fg_leak,
-    #                            segments=model.segments_map, segment_indicator=0,
-    #                            sigma=model.fg_sigma["val"])
+def calc_bg_blur(image, segments, blur_weights, blur_sigma, segment_indicator):
 
-    #np.copyto(model.blurred_image, leak_segment, where=leak_segment!=0)
-
-"""
-    img_copy_BG = np.copy(image)
-    img_copy_FG = np.copy(image)
-
-    np.copyto(img_copy_BG, 0, where=segments < 3)
-    np.copyto(img_copy_FG, 0, where=segments > 0)
-
-    model.image_copy_BG = img_copy_BG
-    model.image_copy_FG = img_copy_FG
-"""
-
-
-
-def calc_segment_blur(img, segments, blur_weights, blur_sigma, segment_indicator,
-                 base_sigma=1, leak=False ):
+    img_copy = np.copy(image)
+    np.copyto(img_copy, 0, where=segments != segment_indicator)
 
     ksize = 2 * int(round(blur_sigma)) + 1
-    base_ksize = 2 * base_sigma + 1
-
-    #segments = np.transpose(np.repeat(segments[:, np.newaxis], 3, axis=1), [0, 2, 1])
 
     region_blur = cv2.GaussianBlur(img_copy, (ksize, ksize), blur_sigma)
-    base_blur = cv2.GaussianBlur(img_copy, (base_ksize, base_ksize), base_sigma)
 
     binary_segments = np.zeros_like(img_copy)
     np.copyto(binary_segments, 1, where=segments == segment_indicator)
 
     normalization = cv2.GaussianBlur(binary_segments, (ksize, ksize), blur_sigma)
-    base_normalization =  cv2.GaussianBlur(binary_segments, (base_ksize, base_ksize),
-                                           base_sigma)
 
     np.copyto(normalization, 1e-5, where=normalization < 1e-5)
-    np.copyto(base_normalization, 1e-5, where=base_normalization < 1e-5)
 
     normalized_region_blur = region_blur / normalization
-    normalized_base_blur = base_blur / base_normalization
 
     combined_blur = np.zeros_like(region_blur)
-    np.copyto(combined_blur, blur_weights * normalized_base_blur +
+    np.copyto(combined_blur, blur_weights * image +
               (1 - blur_weights) * normalized_region_blur,
               where=segments ==segment_indicator)
 
-    if leak:
-        blur_leak = np.zeros_like(region_blur)
-        np.copyto(blur_leak, region_blur, where=segments!=segment_indicator)
-        return combined_blur, blur_leak
-
     return combined_blur
 
-def calc_fg_leak(image, leak, segments, segment_indicator, sigma):
-    ksize = 2 * int(round(sigma)) + 1
-    binary_segments = np.zeros_like(image)
-    np.copyto(binary_segments, 1, where=segments == segment_indicator)
+def calc_fg_blur(image, blur_weights, blur_sigma, model):
 
-    weights_orig = cv2.GaussianBlur(binary_segments, (ksize, ksize), sigma)
+    img_copy = np.copy(image)
 
-    leak_segment = np.zeros_like(image)
-    np.copyto(leak_segment, leak + (1-weights_orig)*image, where=segments!=segment_indicator)
+    ksize = 2 * int(round(blur_sigma)) + 1
 
-    return leak_segment
+    blur = cv2.GaussianBlur(img_copy, (ksize, ksize), blur_sigma)
+
+    blur_weights = cv2.GaussianBlur(blur_weights, (2*ksize-1, 2*ksize-1), 2*blur_sigma)
+
+    combined_blur = blur_weights * image + (1 - blur_weights) * blur
+
+    model.blurred_weights = blur_weights
+
+
+    return combined_blur
 
 def init_haze_variables(model):
     model.ambient = {"val": 0.5, "from_": 0.01, "to_": 1}

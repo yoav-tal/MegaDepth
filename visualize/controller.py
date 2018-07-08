@@ -15,7 +15,7 @@ class Control:
         self.master = master
 
         # open file dialog
-        path = '/Users/yoav/MegaDepth/images/dog_in_boat.jpg'
+        path = '/Users/yoav/MegaDepth/images/eifel.jpeg'
         path = filedialog.askopenfilename(initialdir = "/Users/yoav/MegaDepth/images")
 
         image_name = path.split('/')[-1].split('.')[0]

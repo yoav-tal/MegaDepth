@@ -30,7 +30,7 @@ class Model:
         self.stable_viewables = ["original_image", "depth_map", "filtered_depth_map"]
 
         self.updating_viewables = ["segments_map", "image_copy_FG", "blur_weights",
-                                   "blurred_image"]
+                                   "blurred_image", "blurred_weights"]
 
         self.control_variables = ["focal", "bg_sigma", "fg_sigma", "coc_min",
                                   "bg_power", "fg_power"]
