@@ -9,6 +9,7 @@ class Model:
     def __init__(self, image, image_name):
 
         self.original_image = fix_image_size(image)
+        self.original_image = staged_resize(self.original_image)
 
         self.depth_map, self.filtered_depth_map = [None, None]
         init_depth_maps(self, image_name)
@@ -145,12 +146,20 @@ class ScaleModel(Model):
         #set_to_range(self.depth_map)#self.filtered_averaged_depth_map#
         #super().update_images()
 
-class SmallViewModel(Model):
-    def __init__(self, image, image_name):
 
-        image = staged_resize(fix_image_size(image))
-        image_name
+class ThresholdingModel(Model):
+
+    def __init__(self, image, image_name):
         super().__init__(image, image_name)
+
+        self.foreground, self.midground, self.background = apply_threshold(self.original_image,
+            self.filtered_depth_map)
+
+        self.stable_viewables.extend(["foreground", "midground", "background"])
+        self.updating_viewables = []
+        self.control_variables = []
+
+
 '''
         
         

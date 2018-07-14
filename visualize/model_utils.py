@@ -8,6 +8,7 @@ from argparse import Namespace
 from visualize.get_depth_mask import get_inverse_mask as get_depth
 
 from guidedFilter import fast_guided_filter_color as guided_filter
+from skimage.transform import resize as upsample
 
 
 # size hyperparameters
@@ -127,6 +128,7 @@ def get_depth_maps(image, radius=RADIUS, epsilon=EPSILON, depth_map=None):
     print("depth range:", depth_map.max(), depth_map.min())
     print("filtered depth range:", filtered_depth_map.max(), filtered_depth_map.min())
 
+    #depth_map = upsample(depth_map/depth_map.max(), output_shape=image_sub.shape[:2])
     return depth_map, filtered_depth_map
 
 def get_scaled_depth_maps(image, radius=RADIUS, epsilon=EPSILON):
@@ -205,7 +207,11 @@ def calc_segments(model):
                                                                       model.inv_focus_end))
     # in segments: 0 - foreground ; 1 - focus ; 3 - background
 
-    model.segments_map = np.transpose(np.repeat(segments[:, np.newaxis], 3, axis=1), [0, 2, 1])
+    model.segments_map = copy_to_3_channels(segments)
+
+def copy_to_3_channels(matrix):
+    return np.transpose(np.repeat(matrix[:, np.newaxis], 3, axis=1), [0, 2, 1])
+
 
 def init_blur_variables(model):
     min_val = np.min(model.filtered_depth_map)
@@ -236,9 +242,7 @@ def update_blur_maps(model):
 
     #segments = np.transpose(np.repeat(segments[:, np.newaxis], 3, axis=1), [0, 2, 1])
 
-
-
-    depth_map = np.transpose(np.repeat(inv_depth_map[:, np.newaxis], 3, axis=1), [0, 2, 1])
+    depth_map = copy_to_3_channels(inv_depth_map)
 
     max_depth = np.max(depth_map)
 
@@ -332,7 +336,7 @@ def calc_haze(model):
 
 
     haze_weights = np.minimum(np.exp(-(beta * end_haze) / depth_map) / np.exp(-beta) , 1) ** 2
-    haze_weights = np.transpose(np.repeat(haze_weights[:, np.newaxis], 3, axis=1), [0, 2, 1])
+    haze_weights = copy_to_3_channels(haze_weights)
     model.haze_image = haze_weights * original_image + (1-haze_weights) * ambient
 
 
@@ -402,8 +406,7 @@ def ARF_blur(model):
     weights_vertical = get_weights(coc_map[1:, :], coc_map[:-1, :], cases_vertical, DELTA=DELTA)
 
     weights_horizontal = np.repeat(weights_horizontal[:, np.newaxis], 3, axis=1)
-    weights_vertical = np.transpose(np.repeat(weights_vertical[:, np.newaxis], 3, axis=1),
-                                    axes=[0, 2, 1])
+    weights_vertical = copy_to_3_channels(weights_vertical)
 
     for i in range(n_iter):
 
@@ -447,3 +450,49 @@ def vertical_blur(img, weights, N):
                                                                     img[i, :])
 
     return img
+
+def apply_threshold(image, depth_map):
+
+    u_depth_map = np.uint8(depth_map**2 * 255)
+
+    FG = cv2.threshold(u_depth_map, 0, 1, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
+
+    np.copyto(depth_map, 0, where=FG==1)
+
+    #u_depth_map = np.uint8((depth_map/depth_map.max()) * 255)
+    u_depth_map = np.uint8(((depth_map)**2) * 255)
+
+    hist_vals = np.histogram(u_depth_map, bins=256)[0]
+
+    val = np.argmax(hist_vals[1:])
+
+    np.copyto(u_depth_map, val, where=FG==1)
+
+
+    MG = cv2.threshold(u_depth_map, 0, 1, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
+
+    np.copyto(MG, 0, where=FG==1)
+    #np.copyto(depth_map, np.uint8(val2), where=thresholded2 == 1)
+    #np.copyto(depth_map, 0, where=thresholded2 == 1)
+
+    BG = np.ones(shape=depth_map.shape) - FG - MG
+    #np.copyto(background, 0, where=np.logical_or(foreground == 1, background == 1))
+
+    #val3, thresholded3 = cv2.threshold(depth_map, 0, 1, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+    foreground = np.zeros_like(image)
+    np.copyto(foreground, image, where=copy_to_3_channels(FG) == 1)
+
+    midground = np.zeros_like(image)
+    np.copyto(midground, image, where=copy_to_3_channels(MG) == 1)
+
+    background = np.zeros_like(image)
+    np.copyto(background, image, where=copy_to_3_channels(BG) == 1)
+
+    return foreground, midground, background
+
+# 1. set forward to val / set forward to 0  - same
+# 2. set forward to 0 without normalization in 459 - same as 1. not good e.g. eifel
+# 3. forward to 0, square w/o or w/ normalization - better
+# 4. fw to val, sq w/ norm - same as 3
+# 5. fw to val sq w/o norm - better (compare eifel on midground)
