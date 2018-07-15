@@ -154,6 +154,7 @@ class ThresholdingModel(Model):
 
         self.foreground, self.midground, self.background = apply_threshold(self.original_image,
             self.filtered_depth_map)
+            #self.depth_map/self.depth_map.max())
 
         self.stable_viewables.extend(["foreground", "midground", "background"])
         self.updating_viewables = []

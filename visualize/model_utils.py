@@ -128,7 +128,7 @@ def get_depth_maps(image, radius=RADIUS, epsilon=EPSILON, depth_map=None):
     print("depth range:", depth_map.max(), depth_map.min())
     print("filtered depth range:", filtered_depth_map.max(), filtered_depth_map.min())
 
-    #depth_map = upsample(depth_map/depth_map.max(), output_shape=image_sub.shape[:2])
+    depth_map = upsample(depth_map/depth_map.max(), output_shape=image_sub.shape[:2])
     return depth_map, filtered_depth_map
 
 def get_scaled_depth_maps(image, radius=RADIUS, epsilon=EPSILON):
@@ -455,18 +455,27 @@ def apply_threshold(image, depth_map):
 
     u_depth_map = np.uint8(depth_map**2 * 255)
 
-    FG = cv2.threshold(u_depth_map, 0, 1, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
+    val, FG = cv2.threshold(u_depth_map, 0, 1, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    val = np.uint8(((val/255) ** .5) * 255) + 1
+    num_per_bin = np.count_nonzero(FG) // val
+    res =  np.count_nonzero(FG) % val
 
-    np.copyto(depth_map, 0, where=FG==1)
+    new_vals = np.repeat(np.arange(val), num_per_bin)
+    new_vals = np.append(new_vals, np.arange(res))
+
+    np.place(depth_map, FG == 1, new_vals*0)
+
+
+    #np.copyto(depth_map, 0, where=FG==1)
 
     #u_depth_map = np.uint8((depth_map/depth_map.max()) * 255)
     u_depth_map = np.uint8(((depth_map)**2) * 255)
 
-    hist_vals = np.histogram(u_depth_map, bins=256)[0]
+    #hist_vals = np.histogram(u_depth_map, bins=256)[0]
 
-    val = np.argmax(hist_vals[1:])
+    #val = np.argmax(hist_vals[1:])
 
-    np.copyto(u_depth_map, val, where=FG==1)
+    #np.copyto(u_depth_map, val, where=FG==1)
 
 
     MG = cv2.threshold(u_depth_map, 0, 1, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
@@ -491,6 +500,7 @@ def apply_threshold(image, depth_map):
 
     return foreground, midground, background
 
+    #return depth_map, depth_map, depth_map
 # 1. set forward to val / set forward to 0  - same
 # 2. set forward to 0 without normalization in 459 - same as 1. not good e.g. eifel
 # 3. forward to 0, square w/o or w/ normalization - better
